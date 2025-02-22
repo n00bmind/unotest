@@ -6,52 +6,53 @@
 #import "Program_Print";
 
 
-BuildTestsWorkspace :: ( name: string, baseOptions: Build_Options, filePaths: [] string ) -> Workspace #compile_time
+BuildTestWorkspace :: ( name: string, baseOptions: Build_Options, filePaths: [] string, loc := #caller_location ) -> Workspace #compile_time
 {
-    w := BeginTestsWorkspace( string, baseOptions );
+    w := BeginTestWorkspace( name, baseOptions );
 
+    // Use caller's location in the call to add_build_file
+    // to ensure any relative paths stay relative to the enclosing workspace
     for filePaths
-        add_build_file( it, w );
+        add_build_file( it, w, loc );
 
-    EndTestsWorkspace( w );
+    EndTestWorkspace( w );
     return w;
 }
 
-BeginTestsWorkspace :: ( name: string, baseOptions: Build_Options ) -> Workspace #compile_time
+BeginTestWorkspace :: ( name: string, baseOptions: Build_Options ) -> Workspace #compile_time
 {
     w := compiler_create_workspace( name );
 
     options := baseOptions;
     options.output_type = .EXECUTABLE;
-    if !options.output_executable_name
-        options.output_executable_name = "test";
+    options.output_executable_name = "test";
     set_build_options( options, w );
 
     verboseTests := array_find( get_build_options().compile_time_command_line, "-verbose-tests" );
 
     compiler_begin_intercept( w );
-    AddUserStrings( w, verboseTests );
+    AddTestStrings( w, verboseTests );
 
     return w;
 }
 
-BeginTestsWorkspace :: ( name: string ) -> Workspace #compile_time
+BeginTestWorkspace :: ( name: string ) -> Workspace #compile_time
 {
-    return BeginTestsWorkspace( name, get_build_options() );
+    return BeginTestWorkspace( name, get_build_options() );
 }
 
-AddUserStrings :: ( w: Workspace, verboseBuildtimeTests := false ) #compile_time
+AddTestStrings :: ( w: Workspace, verboseBuildtimeTests := false ) #compile_time
 {
     str := tprint( UserString, verboseBuildtimeTests );
     add_build_string( str, w );
 }
 
-HandleMessage :: ( message: *Message, w: Workspace ) #compile_time
+HandleTestMessage :: ( message: *Message, w: Workspace ) #compile_time
 {
     OnMessage( message, w );
 }
 
-EndTestsWorkspace :: ( w: Workspace ) #compile_time
+EndTestWorkspace :: ( w: Workspace ) #compile_time
 {
     MessageLoop( w );
     compiler_end_intercept(w);
@@ -118,28 +119,37 @@ RunTests :: ( tests: [] TestCase, verbose: bool ) -> s32
     return failedCount;
 }
 
-Expect :: ( $expr: Code, loc := #caller_location ) #expand
+Expect :: ( $expr: Code, loc := #caller_location ) -> bool #expand
 {
     result: bool = #insert expr;
 
-    if !result
+    exprString : string : #insert -> string
     {
-        exprString : string : #insert -> string
-        {
-            nodes := compiler_get_nodes( expr );
+        nodes := compiler_get_nodes( expr );
 
-            builder: String_Builder;
-            print_to_builder( *builder, "\"" );
-            print_expression( *builder, nodes );
-            print_to_builder( *builder, "\";" );
+        builder: String_Builder;
+        print_to_builder( *builder, "\"" );
+        print_expression( *builder, nodes );
+        print_to_builder( *builder, "\";" );
 
-            return builder_to_string(*builder);
-        };
+        return builder_to_string(*builder);
+    };
+    // AppendMsg( "Evaluated expression '%' (%).\n", exprString, ifx result "pass" else "fail" );
+
+    // Only store the first failure for now..
+    if !result && !context.testCase.failed
+    {
         context.testCase.failedExpr = exprString;
         context.testCase.failedLocation = loc;
         context.testCase.failed = true;
-        `return;
     }
+}
+
+Assert :: ( $expr: Code, loc := #caller_location ) -> bool #expand
+{
+    result := Expect( expr, loc );
+    if !result
+        `return;
 }
 
 UserString :: #string END
@@ -295,7 +305,7 @@ OnMessage :: ( message: *Message, w: Workspace )
 OnAddSource :: ( p: *Metaprogram_Plugin )
 {
     // TODO Verbose flag?
-    AddUserStrings( p.workspace, false );
+    AddTestStrings( p.workspace, false );
 }
 
 OnMessage :: ( p: *Metaprogram_Plugin, message: *Message )
@@ -354,6 +364,13 @@ PrintAndIndent :: ( fmt: string, args: ..Any )
 
 TestMsgLogger :: ( msg: string, data: *void, info: Log_Info )
 {
+    AppendMsg( msg );
+}
+
+AppendMsg :: ( fmt: string, args: ..Any )
+{
+    msg := tprint( fmt, ..args );
+
     assert( context.testCase != null );
     append( *context.testCase.msgBuffer, msg );
 }

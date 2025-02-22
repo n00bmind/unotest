@@ -2,6 +2,11 @@
 
 A unit testing non-framework that tries to do just one thing.
 
+Some features:
+- Extremely simple to use. Just tag your test procedures, and add a single call to your build program
+- Colorized output
+- You can add any number of diagnostic messages to your tests (hidden by default), to help you figure out what went wrong
+
 ## Installation
 
 Simply drop `unotest.jai` into your private or system modules folder, and `#import` away!
@@ -108,6 +113,8 @@ MyMessageLoop :: ( w: Workspace, verboseTests := false )
     }
 }
 ```
+
+[TO DO explain verbose messages]
 
 NOTE If you don't have a build metaprogram yet, I am also considering writing a metaprogram plugin to enable all this functionality straight from the command line, but so far I haven't needed this yet.. if you're interested, bug me and I'll get it done!
 
