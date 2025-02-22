@@ -6,9 +6,11 @@
 #import "Program_Print";
 
 
+//// Public API
+
 BuildTestWorkspace :: ( name: string, baseOptions: Build_Options, filePaths: [] string, loc := #caller_location ) -> Workspace #compile_time
 {
-    w := BeginTestWorkspace( name, baseOptions );
+    w := BeginTestWorkspace( name, baseOptions, loc );
 
     // Use caller's location in the call to add_build_file
     // to ensure any relative paths stay relative to the enclosing workspace
@@ -19,14 +21,14 @@ BuildTestWorkspace :: ( name: string, baseOptions: Build_Options, filePaths: [] 
     return w;
 }
 
-BeginTestWorkspace :: ( name: string, baseOptions: Build_Options ) -> Workspace #compile_time
+BeginTestWorkspace :: ( name: string, baseOptions: Build_Options, loc := #caller_location ) -> Workspace #compile_time
 {
     w := compiler_create_workspace( name );
 
     options := baseOptions;
     options.output_type = .EXECUTABLE;
     options.output_executable_name = "test";
-    set_build_options( options, w );
+    set_build_options( options, w, loc );
 
     verboseTests := array_find( get_build_options().compile_time_command_line, "-verbose-tests" );
 
@@ -36,9 +38,9 @@ BeginTestWorkspace :: ( name: string, baseOptions: Build_Options ) -> Workspace 
     return w;
 }
 
-BeginTestWorkspace :: ( name: string ) -> Workspace #compile_time
+BeginTestWorkspace :: ( name: string, loc := #caller_location ) -> Workspace #compile_time
 {
-    return BeginTestWorkspace( name, get_build_options() );
+    return BeginTestWorkspace( name, get_build_options(), loc );
 }
 
 AddTestStrings :: ( w: Workspace, verboseBuildtimeTests := false ) #compile_time
@@ -58,6 +60,42 @@ EndTestWorkspace :: ( w: Workspace ) #compile_time
     compiler_end_intercept(w);
 }
 
+
+Expect :: ( $expr: Code, loc := #caller_location ) -> bool #expand
+{
+    result: bool = #insert expr;
+
+    exprString : string : #insert -> string
+    {
+        nodes := compiler_get_nodes( expr );
+
+        builder: String_Builder;
+        print_to_builder( *builder, "\"" );
+        print_expression( *builder, nodes );
+        print_to_builder( *builder, "\";" );
+
+        return builder_to_string(*builder);
+    };
+    // AppendMsg( "Evaluated expression '%' (%).\n", exprString, ifx result "pass" else "fail" );
+
+    // Only store the first failure for now..
+    if !result && !context.testCase.failed
+    {
+        context.testCase.failedExpr = exprString;
+        context.testCase.failedLocation = loc;
+        context.testCase.failed = true;
+    }
+}
+
+Assert :: ( $expr: Code, loc := #caller_location ) -> bool #expand
+{
+    result := Expect( expr, loc );
+    if !result
+        `return;
+}
+
+//// Internal stuff
+//// Some things here still need to be exported, since they'll be called from the user's application scope
 
 TestCase :: struct
 {
@@ -119,7 +157,7 @@ RunTests :: ( tests: [] TestCase, verbose: bool ) -> s32
     endTime := current_time_monotonic();
     totalElapsedMillis := to_milliseconds( endTime - startTime, true );
 
-    print( "\n% tests ran in % ms.\n", tests.count, totalElapsedMillis );
+    print_color( "\n% tests ran in % ms.\n", tests.count, totalElapsedMillis, color = .HI_WHITE );
     if failedCount > 0
     {
         print_color( "% PASSED. ", tests.count - failedCount, color = .GREEN );
@@ -131,39 +169,6 @@ RunTests :: ( tests: [] TestCase, verbose: bool ) -> s32
     }
 
     return failedCount;
-}
-
-Expect :: ( $expr: Code, loc := #caller_location ) -> bool #expand
-{
-    result: bool = #insert expr;
-
-    exprString : string : #insert -> string
-    {
-        nodes := compiler_get_nodes( expr );
-
-        builder: String_Builder;
-        print_to_builder( *builder, "\"" );
-        print_expression( *builder, nodes );
-        print_to_builder( *builder, "\";" );
-
-        return builder_to_string(*builder);
-    };
-    // AppendMsg( "Evaluated expression '%' (%).\n", exprString, ifx result "pass" else "fail" );
-
-    // Only store the first failure for now..
-    if !result && !context.testCase.failed
-    {
-        context.testCase.failedExpr = exprString;
-        context.testCase.failedLocation = loc;
-        context.testCase.failed = true;
-    }
-}
-
-Assert :: ( $expr: Code, loc := #caller_location ) -> bool #expand
-{
-    result := Expect( expr, loc );
-    if !result
-        `return;
 }
 
 UserString :: #string END
