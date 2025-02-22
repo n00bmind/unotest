@@ -79,6 +79,8 @@ RunTests :: ( tests: [] TestCase, verbose: bool ) -> s32
     if verbose
         context.log_level = .VERBOSE;
 
+    startTime := current_time_monotonic();
+
     for t: tests
     {
         PrintAndIndent( "Running %...", t.name );
@@ -109,12 +111,24 @@ RunTests :: ( tests: [] TestCase, verbose: bool ) -> s32
 
         if t.failed
             // TODO Want to also log this (but not print the line twice!)
-            print_color( "%: Expression '%' evaluated as false.\n", t.failedLocation, t.failedExpr, color = .HI_WHITE );
+            print_color( "%: Expression '%' evaluated as false.\n", t.failedLocation, t.failedExpr, color = .WHITE );
 
         reset_temporary_storage();
     }
 
-    // TODO Summary
+    endTime := current_time_monotonic();
+    totalElapsedMillis := to_milliseconds( endTime - startTime, true );
+
+    print( "\n% tests ran in % ms.\n", tests.count, totalElapsedMillis );
+    if failedCount > 0
+    {
+        print_color( "% PASSED. ", tests.count - failedCount, color = .GREEN );
+        print_color( "% FAILED.\n", failedCount, color = .RED );
+    }
+    else
+    {
+        print_color( "ALL PASSED.\n", color = .GREEN );
+    }
 
     return failedCount;
 }

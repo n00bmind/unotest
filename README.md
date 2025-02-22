@@ -6,6 +6,7 @@ A unit testing non-framework that tries to do just one thing.
 
 Some features:
 - Extremely simple to use. Just tag your test procedures, and add a single call to your build program
+- Support for builtime tests
 - Colorized output
 - You can add any number of diagnostic messages to your tests (hidden by default), to help you figure out what went wrong
 
