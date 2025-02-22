@@ -2,6 +2,8 @@
 
 A unit testing non-framework that tries to do just one thing.
 
+<img src="https://github.com/user-attachments/assets/135d32d3-08ed-45f2-be29-262b1151f6a9" height="200" />
+
 Some features:
 - Extremely simple to use. Just tag your test procedures, and add a single call to your build program
 - Colorized output
