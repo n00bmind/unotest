@@ -6,7 +6,7 @@
 #import "Program_Print";
 
 
-//// Public API
+//// Public API (for user metaprograms)
 
 BuildTestWorkspace :: ( name: string, baseOptions: Build_Options, filePaths: [] string, loc := #caller_location ) -> Workspace #compile_time
 {
@@ -61,6 +61,8 @@ EndTestWorkspace :: ( w: Workspace ) #compile_time
 }
 
 
+//// Public API (test helpers)
+
 Expect :: ( $expr: Code, loc := #caller_location ) -> bool #expand
 {
     result: bool = #insert expr;
@@ -92,6 +94,22 @@ Assert :: ( $expr: Code, loc := #caller_location ) -> bool #expand
     result := Expect( expr, loc );
     if !result
         `return;
+}
+
+DeepEquals :: ( a: Any, b: Any ) -> bool
+{
+    errorStr: String_Builder;
+    errorStr.allocator = temp;
+
+    print_type_to_builder( *errorStr, a.type );
+
+    result := DeepEqualsInternal( cast(*Any_Struct) *a, cast(*Any_Struct) *b, "", *errorStr );
+    if !result
+    {
+        log( "%\n", builder_to_string( *errorStr ) );
+        free_buffers( *errorStr );
+    }
+    return result;
 }
 
 //// Internal stuff
@@ -394,10 +412,126 @@ AppendMsg :: ( fmt: string, args: ..Any )
     append( *context.testCase.msgBuffer, msg );
 }
 
-
 globalBuilder: String_Builder;
 globalRuntimeTests: [..] *Code_Procedure_Header;
 globalBuildtimeTests: [..] *Code_Procedure_Header;
 globalEmittedRuntimeTests: bool = false;
 globalEmittedBuildtimeTests: bool = false;
 ranBuildtimeTests: bool = false;
+
+
+DeepEqualsInternal :: ( a: *Any_Struct, b: *Any_Struct, scope: string, errorStr: *String_Builder ) -> bool
+{
+    if a.type != b.type
+    {
+        print_to_builder( errorStr, " - Types differ (a is %, b is %)", a.type, b.type );
+        return false;
+    }
+
+    builderState: struct
+    {
+        currentBuffer: *String_Builder.Buffer;
+        currentBufferCount: s64;
+    }
+    // Save current state in the stack
+    builderState.currentBuffer = get_current_buffer( errorStr );
+    builderState.currentBufferCount = builderState.currentBuffer.count;
+
+    append( errorStr, scope );
+
+    if a.type.type ==
+    {
+        case .STRUCT;
+        {
+            aType := cast(*Type_Info_Struct) a.type;
+            for aType.members
+            {
+                aIt := Any_Struct.{ it.type, a.value_pointer + it.offset_in_bytes };
+                bIt := Any_Struct.{ it.type, b.value_pointer + it.offset_in_bytes };
+
+                scope := tprint( ".%", it.name );
+                result := DeepEqualsInternal( *aIt, *bIt, scope, errorStr );
+                if !result
+                    return false;
+            }
+        }
+        case .ARRAY;
+        {
+            aType := cast(*Type_Info_Array) a.type;
+            bType := cast(*Type_Info_Array) b.type;
+            itType := aType.element_type;
+
+            aBase, bBase: *void = null;
+            aCount, bCount: s64 = 0;
+            if aType.array_type ==
+            {
+                case .FIXED;
+                    aBase = a.value_pointer;
+                    bBase = b.value_pointer;
+                    aCount = aType.array_count;
+                    bCount = bType.array_count;
+                case .VIEW;
+                    aArray := cast(*Array_View_64) a.value_pointer;
+                    bArray := cast(*Array_View_64) b.value_pointer;
+                    aBase = aArray.data;
+                    bBase = bArray.data;
+                    aCount = aArray.count;
+                    bCount = bArray.count;
+                case .RESIZABLE;
+                    aArray := cast(*Resizable_Array) a.value_pointer;
+                    bArray := cast(*Resizable_Array) b.value_pointer;
+                    aBase = aArray.data;
+                    bBase = bArray.data;
+                    aCount = aArray.count;
+                    bCount = bArray.count;
+            }
+
+            if aCount != bCount
+            {
+                print_to_builder( errorStr, " - Array counts differ (a is %, b is %)", aCount, bCount );
+                return false;
+            }
+            for idx: 0 .. aCount - 1
+            {
+                aIt := Any_Struct.{ itType, aBase + idx * itType.runtime_size };
+                bIt := Any_Struct.{ itType, bBase + idx * itType.runtime_size };
+                scope := tprint( ".[%]", idx );
+                result := DeepEqualsInternal( *aIt, *bIt, scope, errorStr );
+                if !result
+                    return false;
+            }
+        }
+        case .STRING;
+        {
+            aString := cast(*string) a.value_pointer;
+            bString := cast(*string) b.value_pointer;
+            result := <<aString == <<bString;
+            if !result
+            {
+                print_to_builder( errorStr, " - Strings differ (a is '%', b is '%')", <<aString, <<bString );
+                return false;
+            }
+        }
+        case;
+        {
+            // Simply memcmp their bytes
+            result := memcmp( a.value_pointer, b.value_pointer, a.type.runtime_size ) == 0;
+            if !result
+            {
+                append( errorStr, " - Contents differ (a is <" );
+                print_item_to_builder( errorStr, <<cast(*Any)a, false );
+                append( errorStr, ">, b is <" );
+                print_item_to_builder( errorStr, <<cast(*Any)b, false );
+                append( errorStr, ">)" );
+                return false;
+            }
+        }
+    }
+
+    // Rewind current error path by restoring the builder's state
+    errorStr.current_buffer = builderState.currentBuffer;
+    errorStr.current_buffer.count = builderState.currentBufferCount;
+
+    return true;
+}
+
