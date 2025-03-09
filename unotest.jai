@@ -63,22 +63,21 @@ EndTestWorkspace :: ( w: Workspace ) #compile_time
 
 //// Public API (test helpers)
 
+// NOTE This will accept any "truthy" expression, in the style of C
 Expect :: ( $expr: Code, loc := #caller_location ) -> bool #expand
 {
-    result: bool = #insert expr;
+    exprValue: Any = #insert expr;
 
-    exprString : string : #insert -> string
+    exprString := GenExprString( expr );
+
+    result, valid := IsTrue( exprValue );
+    if !valid
     {
-        nodes := compiler_get_nodes( expr );
-
-        builder: String_Builder;
-        print_to_builder( *builder, "\"" );
-        print_expression( *builder, nodes );
-        print_to_builder( *builder, "\";" );
-
-        return builder_to_string(*builder);
-    };
-    // AppendMsg( "Evaluated expression '%' (%).\n", exprString, ifx result "pass" else "fail" );
+        print_color( "\n%: Expression '%' cannot be evaluated as bool!\n", loc, exprString, color = .RED );
+        assert( false && "Expression not supported" );
+    }
+    // else
+    //     AppendMsg( "Evaluated expression '%' (%).\n", exprString, ifx result "true" else "false" );
 
     // Only store the first failure for now..
     if !result && !context.testCase.failed
@@ -87,6 +86,52 @@ Expect :: ( $expr: Code, loc := #caller_location ) -> bool #expand
         context.testCase.failedLocation = loc;
         context.testCase.failed = true;
     }
+    return result;
+}
+
+ExpectFalse :: ( $expr: Code, loc := #caller_location ) -> bool #expand
+{
+    exprValue: Any = #insert expr;
+
+    exprString := GenExprString( expr );
+
+    result, valid := IsTrue( exprValue );
+    if !valid
+    {
+        print_color( "\n%: Expression '%' cannot be evaluated as bool!\n", loc, exprString, color = .RED );
+        assert( false && "Expression not supported" );
+    }
+    // else
+    //     AppendMsg( "Evaluated expression '%' (%).\n", exprString, ifx result "true" else "false" );
+
+    // Only store the first failure for now..
+    if result && !context.testCase.failed
+    {
+        context.testCase.failedExpr = exprString;
+        context.testCase.failedLocation = loc;
+        context.testCase.failed = true;
+    }
+    return !result;
+}
+
+ExpectEqual :: ( $exprA: Code, $exprB: Code, loc := #caller_location ) -> bool #expand
+{
+    result: bool = (#insert exprA) == (#insert exprB);
+
+    exprString := GenExprEqualString( exprA, exprB );
+
+    // AppendMsg( "Evaluated expression '%' (%).\n", exprString, ifx result "pass" else "fail" );
+
+    // Only store the first failure for now..
+    // TODO Print what each side was on failure etc
+    if !result && !context.testCase.failed
+    {
+        context.testCase.failedExpr = exprString;
+        context.testCase.failedLocation = loc;
+        context.testCase.failed = true;
+    }
+    return result;
+
 }
 
 Assert :: ( $expr: Code, loc := #caller_location ) -> bool #expand
@@ -95,6 +140,21 @@ Assert :: ( $expr: Code, loc := #caller_location ) -> bool #expand
     if !result
         `return;
 }
+
+AssertFalse :: ( $expr: Code, loc := #caller_location ) -> bool #expand
+{
+    result := ExpectFalse( expr, loc );
+    if !result
+        `return;
+}
+
+AssertEqual :: ( $exprA: Code, $exprB: Code, loc := #caller_location ) -> bool #expand
+{
+    result := ExpectEqual( exprA, exprB, loc );
+    if !result
+        `return;
+}
+
 
 DeepEquals :: ( a: Any, b: Any ) -> bool
 {
@@ -190,6 +250,7 @@ RunTests :: ( tests: [] TestCase, verbose: bool ) -> s32
 }
 
 UserString :: #string END
+#import "Basic";
 #import "Command_Line";
 
 #placeholder AllTests; // [] TestCase
@@ -215,6 +276,7 @@ RunAllBuildtimeTests :: () -> s32 #compile_time
     return failedCount;
 }
 
+// TODO Support for custom user main proc
 main :: ()
 {
     exitCode := RunAllTests();
@@ -419,6 +481,78 @@ globalEmittedRuntimeTests: bool = false;
 globalEmittedBuildtimeTests: bool = false;
 ranBuildtimeTests: bool = false;
 
+
+IsTrue :: ( expr: Any ) -> bool, bool
+{
+    result := false;
+    if expr.type.type ==
+    {
+        case .INTEGER;
+            if expr.type.runtime_size ==
+            {
+                case 1;
+                    result = (cast(*u8)expr.value_pointer).* != 0;
+                case 2;
+                    result = (cast(*u16)expr.value_pointer).* != 0;
+                case 4;
+                    result = (cast(*u32)expr.value_pointer).* != 0;
+                case 8;
+                    result = (cast(*u64)expr.value_pointer).* != 0;
+            }
+        case .BOOL;
+            result = (cast(*bool) expr.value_pointer).*;
+        case .POINTER;
+            result = (cast(**void) expr.value_pointer).* != null;
+        case;
+            return false, false;
+    }
+    return result, true;
+}
+
+GenExprString :: ( $expr: Code ) -> string #expand
+{
+    exprString : string : #insert -> string
+    {
+        nodes := compiler_get_nodes( expr );
+
+        builder: String_Builder;
+        print_to_builder( *builder, "#string STR\n" );
+        print_expression( *builder, nodes );
+        print_to_builder( *builder, "\nSTR" );
+
+        return builder_to_string( *builder );
+    };
+    // TODO Kinda makes sense, but using a here-string seems to append a newline at the end..
+    str := exprString;
+    if str[ str.count - 1] == #char "\n"
+        str.count -= 1;
+
+    return str;
+}
+
+GenExprEqualString :: ( $exprA: Code, $exprB: Code ) -> string #expand
+{
+    exprString : string : #insert -> string
+    {
+        nodesA := compiler_get_nodes( exprA );
+        nodesB := compiler_get_nodes( exprB );
+
+        builder: String_Builder;
+        print_to_builder( *builder, "#string STR\n(" );
+        print_expression( *builder, nodesA );
+        print_to_builder( *builder, ") == (" );
+        print_expression( *builder, nodesB );
+        print_to_builder( *builder, ")\nSTR" );
+
+        return builder_to_string( *builder );
+    };
+    // TODO Kinda makes sense, but using a here-string seems to append a newline at the end..
+    str := exprString;
+    if str[ str.count - 1] == #char "\n"
+        str.count -= 1;
+
+    return str;
+}
 
 DeepEqualsInternal :: ( a: *Any_Struct, b: *Any_Struct, scope: string, errorStr: *String_Builder ) -> bool
 {
