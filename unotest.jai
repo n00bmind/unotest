@@ -3,6 +3,7 @@
 #import "Basic";
 #import "String";
 #import "Compiler";
+#import "Debug";
 #import "Program_Print";
 
 
@@ -137,22 +138,40 @@ ExpectEqual :: ( $exprA: Code, $exprB: Code, loc := #caller_location ) -> bool #
 Assert :: ( $expr: Code, loc := #caller_location ) -> bool #expand
 {
     result := Expect( expr, loc );
+
     if !result
+    {
+        if context.testFlags & .BreakOnFailure
+            debug_break();
+
         `return;
+    }
 }
 
 AssertFalse :: ( $expr: Code, loc := #caller_location ) -> bool #expand
 {
     result := ExpectFalse( expr, loc );
+
     if !result
+    {
+        if context.testFlags & .BreakOnFailure
+            debug_break();
+
         `return;
+    }
 }
 
 AssertEqual :: ( $exprA: Code, $exprB: Code, loc := #caller_location ) -> bool #expand
 {
     result := ExpectEqual( exprA, exprB, loc );
+
     if !result
+    {
+        if context.testFlags & .BreakOnFailure
+            debug_break();
+
         `return;
+    }
 }
 
 
@@ -187,12 +206,19 @@ TestCase :: struct
 }
 #add_context testCase: *TestCase;
 
+TestFlags :: enum_flags
+{
+    Verbose;
+    BreakOnFailure;
+}
+#add_context testFlags: TestFlags;
+
 // Returns how many tests fails from the given list failed
-RunTests :: ( tests: [] TestCase, verbose: bool ) -> s32
+RunTests :: ( tests: [] TestCase, flags: TestFlags ) -> s32
 {
     failedCount: s32 = 0;
 
-    if verbose
+    if flags & .Verbose
         context.log_level = .VERBOSE;
 
     startTime := current_time_monotonic();
@@ -204,6 +230,7 @@ RunTests :: ( tests: [] TestCase, verbose: bool ) -> s32
         newContext := context;
         newContext.testCase = *t;
         newContext.logger = TestMsgLogger;
+        newContext.testFlags = flags;
         push_context newContext
         {
             t.proc();
@@ -226,8 +253,10 @@ RunTests :: ( tests: [] TestCase, verbose: bool ) -> s32
         }
 
         if t.failed
+        {
             // TODO Want to also log this (but not print the line twice!)
             print_color( "%: Expression '%' evaluated as false.\n", t.failedLocation, t.failedExpr, color = .WHITE );
+        }
 
         reset_temporary_storage();
     }
@@ -261,17 +290,31 @@ RunAllTests :: () -> s32
     Arguments :: struct
     {
         verbose: bool;
+        break_on_failure: bool;
+        // filter: string;
     }
     parsedOk, args, is_set := parse_arguments( Arguments );
-    verbose := parsedOk && is_set.verbose;
 
-    failedCount := RunTests( AllTests, verbose );
+    verbose := ifx parsedOk args.verbose else false;
+    break_on_failure := ifx parsedOk args.break_on_failure else false;
+    // TODO Could parse wildcards here etc
+    // filter := ifx parsedOk args.filter else "";
+
+    flags: TestFlags = (ifx verbose then .Verbose)
+        | (ifx break_on_failure then .BreakOnFailure);
+
+    failedCount := RunTests( AllTests, flags );
     return failedCount;
 }
 
 RunAllBuildtimeTests :: () -> s32 #compile_time
 {
-    failedCount := RunTests( AllBuildtimeTests, %1 );
+    verbose := %1;
+    flags: TestFlags = (ifx verbose then .Verbose);
+        // TODO 
+        // | (ifx break_on_failure then .BreakOnFailure);
+
+    failedCount := RunTests( AllBuildtimeTests, flags );
     print( "\n" );
     return failedCount;
 }
